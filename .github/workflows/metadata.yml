@@ -25,25 +25,27 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   metadata:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
-      - name: Checkout project repo
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          persist-credentials: false
 
       - name: Install python dependencies
         run: |
           sudo apt-get install -y \
-          python3-gnupg \
-          python3-requests \
-          python3-bcrypt \
-          python3-coloredlogs
+            python3-gnupg \
+            python3-requests \
+            python3-bcrypt \
+            python3-coloredlogs
 
       - name: Generate metadata
         run: ./scripts/generate-server-metadata --generate-list --output ./metadata
@@ -52,46 +54,14 @@ jobs:
           PROTON_PASSWORD: ${{ secrets.PROTON_PASSWORD }}
           DEBUG: ${{ inputs.DEBUG }}
 
-      - name: Generate bot token
-        uses: actions/create-github-app-token@v1
-        id: bot-token
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          owner: ${{ vars.METADATA_REPO_OWNER }}
-          app-id: ${{ vars.METADATA_BOT_APP_ID }}
-          private-key: ${{ secrets.METADATA_BOT_APP_PRIVATE_KEY }}
-          repositories: ${{ vars.METADATA_REPO_NAME }}
+          path: ./metadata
 
-      - name: Checkout metadata repo to protonwire-api
-        uses: actions/checkout@v4
-        with:
-          path: protonwire-api
-          token: ${{ steps.bot-token.outputs.token }}
-          repository: ${{ vars.METADATA_REPO }}
-          persist-credentials: true
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
-      - name: Configure git and remove stale data
-        working-directory: protonwire-api
-        run: |
-          git config user.name ${{ vars.METADATA_BOT_GIT_USERNAME }}
-          git config user.email ${{ vars.METADATA_BOT_GIT_EMAIL }}
-          rm -rf ./v1/
-
-      - name: Sync metadata
-        run: |
-          rsync \
-            --archive \
-            --human-readable \
-            ./metadata/ \
-            ${GITHUB_WORKSPACE}/protonwire-api/
-
-      - name: Push Metadata (if on master)
-        working-directory: protonwire-api
-        if: ${{ github.ref == 'refs/heads/master' }}
-        run: |
-          git add --all
-          git commit -m "Updated at - $(date)"
-          git push -u origin master
-
-      - name: Ping URL
-        if: ${{ github.event_name == 'schedule' && github.ref == 'refs/heads/master' }}
-        run: curl -X POST -sfL ${{ secrets.METADATA_UPDATE_PING_URL }}
+      - name: Ping metadata
+        run: curl -sfL ${{ steps.deployment.outputs.page_url }}metadata.json
